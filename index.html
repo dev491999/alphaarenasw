@@ -752,7 +752,65 @@
              return timer.elapsed || 0;
         }
 
-        // --- ADMIN LOGIN LOGIC ---
+
+            // --- TIME FORMATTING (MM:SS:CC) ---
+            function formatTime(ms) {
+              // Check for the DNF/ERROR value (-1)
+             if (ms < 0) {
+            return "DNF / ERROR"; 
+             }
+    
+             const totalSeconds = Math.floor(ms / 1000);
+             const minutes = Math.floor(totalSeconds / 60);
+             const seconds = totalSeconds % 60;
+             // Centiseconds (milliseconds / 10, floored)
+             const milliseconds = Math.floor((ms % 1000) / 10);
+    
+             return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}:${String(milliseconds).padStart(2, '0')}`;
+}
+        function volunteerGiveUp(group, color, buttonElement) {
+        const timer = appState.groups[group].timers[color];
+    
+         if (timer.running) {
+        
+        if (!confirm(`Are you sure you want to mark ${color} for Group ${group} as DNF/GIVE UP? This action will record an ERROR time.`)) {
+            return;
+        }
+
+        // FIX: Immediately disable the button to prevent double-clicks
+        if (buttonElement) {
+            buttonElement.disabled = true;
+            buttonElement.textContent = "DNF RECORDED";
+        }
+        
+        // Use a special negative number to denote DNF/GIVE UP
+        const DNF_TIME_MS = -1; 
+        
+        const timerUpdates = {
+            running: false,
+            elapsed: DNF_TIME_MS, // Set to -1 to signify an error/DNF
+            startTime: null 
+        };
+
+        const colorInfo = COLORS.find(c => c.name.toLowerCase() === color.toLowerCase());
+        const newLeaderboardEntry = { 
+            group: parseInt(group), 
+            color: colorInfo.name, 
+            timeMs: DNF_TIME_MS, // Record the DNF time
+            waveNumber: appState.groups[group].number,
+            bib: timer.bib || 'N/A',
+            recordedTime: firebase.database.ServerValue.TIMESTAMP 
+        };
+        
+        const updates = {};
+        updates[`/groups/${group}/timers/${color}`] = {...timer, ...timerUpdates}; 
+        
+        // PUSH TO LEADERBOARD
+        db.ref('/leaderboard').push(newLeaderboardEntry);
+        db.ref('/').update(updates);
+    }
+}     
+   // --- ADMIN LOGIN LOGIC ---
         function adminLogin() {
             const code = document.getElementById('admin-code-input').value.trim();
             const messageElement = document.getElementById('admin-login-message');
@@ -876,6 +934,8 @@
     const currentWaveNumber = groupData.number;
 
     const allStopped = Object.values(timers).every(t => !t.running);
+            const anyActiveTimeRecorded = Object.values(timers).some(t => t.elapsed > 0 && t.status === 'active');
+
     if (!allStopped) {
         alert("Stop all timers before finishing the wave.");
         return;
@@ -1299,7 +1359,13 @@
 
                     <div class="volunteer-controls">
                         <button class="btn-volunteer-stop" id="volunteer-stop-btn" onclick="volunteerStop('${group}', '${color}', this)" ${buttonDisabled ? 'disabled' : ''}>${buttonText}</button>
-                    </div>
+                        <button class="btn-volunteer-stop" 
+                                style="background: var(--color-dark);" 
+                                id="volunteer-giveup-btn" 
+                                onclick="volunteerGiveUp('${group}', '${color}', this)" 
+                                ${buttonDisabled ? 'disabled' : ''} 
+                                ${currentElapsed > 0 && !timer.running ? 'disabled' : ''} 
+                                >GIVE UP / DNF</button>
                 </div>
             `;
         }
