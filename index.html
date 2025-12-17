@@ -680,6 +680,7 @@
         // --- CONSTANTS & LOCAL STATE (Mirrored from Firebase) ---
         const ADMIN_CODE = "ADMIN123"; 
         const RESET_PASSWORD = "Reset"; // Password for group reset
+        const GLOBAL_RESET_PASSWORD = "password";
         const BIB_PREFIX = "AW"; 
         
         const COLORS = [
@@ -809,7 +810,6 @@
         db.ref('/').update(updates);
     }
 }
-
         // --- ADMIN LOGIN LOGIC ---
         function adminLogin() {
             const code = document.getElementById('admin-code-input').value.trim();
