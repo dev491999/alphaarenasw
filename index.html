@@ -564,7 +564,7 @@
                     <button onclick="adminLogin()">Login</button>
                 </div>
                 <div class="login-message" id="admin-login-message">
-                    Enter the admin access code to manage the groups. (Code: **ADMIN123**)
+                    Enter the admin access code to manage the groups.
                 </div>
             </div>
         </div>
@@ -680,7 +680,8 @@
         // --- CONSTANTS & LOCAL STATE (Mirrored from Firebase) ---
         const ADMIN_CODE = "ADMIN123"; 
         const RESET_PASSWORD = "Reset"; // Password for group reset
-        const BIB_PREFIX = "AW"; 
+        const GLOBAL_RESET_PASSWORD = "password"; // <--- ADD THIS LINE
+        const BIB_PREFIX = "AW";
         
         const COLORS = [
             { name: 'Red', hex: '#c0152f', abbr: 'RE' },
@@ -743,72 +744,13 @@
         }
         
         // --- SYNCED TIME CALCULATION ---
-       function calculateTime(timer) {
-    // Calculate time based on the shared startTime from the database
-    if (timer.running && timer.startTime) {
-        return Date.now() - timer.startTime;
-    }
-    return timer.elapsed || 0;
-}
-
-
-            // --- TIME FORMATTING (MM:SS:CC) ---
-            function formatTime(ms) {
-              // Check for the DNF/ERROR value (-1)
-             if (ms < 0) {
-            return "DNF / ERROR"; 
+        function calculateTime(timer) {
+             // Calculate time based on the shared startTime from the database
+             if (timer.running && timer.startTime) {
+                 return Date.now() - timer.startTime;
              }
-    
-             const totalSeconds = Math.floor(ms / 1000);
-             const minutes = Math.floor(totalSeconds / 60);
-             const seconds = totalSeconds % 60;
-             // Centiseconds (milliseconds / 10, floored)
-             const milliseconds = Math.floor((ms % 1000) / 10);
-    
-             return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}:${String(milliseconds).padStart(2, '0')}`;
-}
-        function volunteerGiveUp(group, color, buttonElement) {
-        const timer = appState.groups[group].timers[color];
-    
-         if (timer.running) {
-        
-        if (!confirm(`Are you sure you want to mark ${color} for Group ${group} as DNF/GIVE UP? This action will record an ERROR time.`)) {
-            return;
+             return timer.elapsed || 0;
         }
-
-        // FIX: Immediately disable the button to prevent double-clicks
-        if (buttonElement) {
-            buttonElement.disabled = true;
-            buttonElement.textContent = "DNF RECORDED";
-        }
-        
-        // Use a special negative number to denote DNF/GIVE UP
-        const DNF_TIME_MS = -1; 
-        
-        const timerUpdates = {
-            running: false,
-            elapsed: DNF_TIME_MS, // Set to -1 to signify an error/DNF
-            startTime: null 
-        };
-
-        const colorInfo = COLORS.find(c => c.name.toLowerCase() === color.toLowerCase());
-        const newLeaderboardEntry = { 
-            group: parseInt(group), 
-            color: colorInfo.name, 
-            timeMs: DNF_TIME_MS, // Record the DNF time
-            waveNumber: appState.groups[group].number,
-            bib: timer.bib || 'N/A',
-            recordedTime: firebase.database.ServerValue.TIMESTAMP 
-        };
-        
-        const updates = {};
-        updates[`/groups/${group}/timers/${color}`] = {...timer, ...timerUpdates}; 
-        
-        // PUSH TO LEADERBOARD
-        db.ref('/leaderboard').push(newLeaderboardEntry);
-        db.ref('/').update(updates);
-    }
-}
 
         // --- ADMIN LOGIN LOGIC ---
         function adminLogin() {
@@ -927,45 +869,54 @@
 
         
         function incrementGroup(group) {
-            if (!isAdminLoggedIn) return;
+    if (!isAdminLoggedIn) return;
 
-            const timers = appState.groups[group].timers;
-            const currentWaveNumber = appState.groups[group].number;
+    const groupData = appState.groups[group];
+    const timers = groupData.timers;
+    const currentWaveNumber = groupData.number;
 
-            const allStopped = Object.values(timers).every(t => !t.running);
-            const anyActiveTimeRecorded = Object.values(timers).some(t => t.elapsed > 0 && t.status === 'active');
+    const allStopped = Object.values(timers).every(t => !t.running);
+    if (!allStopped) {
+        alert("Stop all timers before finishing the wave.");
+        return;
+    }
 
-            if (!allStopped) {
-                alert(`Please stop all running timers in Group ${group} before moving to the next wave.`);
-                return;
-            }
+    // Prepare leaderboard entries only for active colors that have a recorded time
+    const updates = {};
+    Object.keys(timers).forEach(color => {
+        const t = timers[color];
+        if (t.status === 'active' && t.elapsed > 0) {
+            const colorInfo = COLORS.find(c => c.name.toLowerCase() === color.toLowerCase());
             
-            if (anyActiveTimeRecorded) {
-                
-                // FINAL CHECK: Ensure the current wave number is now considered 'used'
-                if (!isWaveNumberUsed(currentWaveNumber)) {
-                     // This is an integrity check, indicating a completed wave didn't record a time.
-                     // We proceed anyway, but warn the admin if needed, and rely on the next wave logic.
-                }
-
-                const newNumber = currentWaveNumber + 2;
-                
-                const updates = {};
-                updates[`groups/${group}/number`] = newNumber;
-                
-                Object.keys(timers).forEach(color => {
-                    updates[`groups/${group}/timers/${color}/running`] = false;
-                    updates[`groups/${group}/timers/${color}/elapsed`] = 0;
-                    updates[`groups/${group}/timers/${color}/startTime`] = null;
-                    updates[`groups/${group}/timers/${color}/status`] = 'active'; 
-                    updates[`groups/${group}/timers/${color}/bib`] = ''; 
-                });
-                
-                db.ref('/').update(updates);
-            } else {
-                 alert(`Cannot move to the next wave (Wave ${appState.groups[group].number + 2}) for Group ${group} because no active times were recorded in the current wave.`);
-            }
+            // Create a new unique key for the leaderboard entry
+            const newRef = db.ref('/leaderboard').push();
+            updates[`/leaderboard/${newRef.key}`] = {
+                group: parseInt(group),
+                color: colorInfo.name,
+                timeMs: t.elapsed,
+                waveNumber: currentWaveNumber,
+                bib: t.bib || 'N/A',
+                recordedTime: firebase.database.ServerValue.TIMESTAMP
+            };
         }
+    });
+
+    // Prepare Next Wave Reset
+    const newNumber = currentWaveNumber + 2;
+    updates[`groups/${group}/number`] = newNumber;
+    
+    Object.keys(timers).forEach(color => {
+        updates[`groups/${group}/timers/${color}/running`] = false;
+        updates[`groups/${group}/timers/${color}/elapsed`] = 0;
+        updates[`groups/${group}/timers/${color}/startTime`] = null;
+        updates[`groups/${group}/timers/${color}/status`] = 'active'; 
+        updates[`groups/${group}/timers/${color}/bib`] = ''; 
+    });
+
+    db.ref('/').update(updates).then(() => {
+        alert(`Wave ${currentWaveNumber} saved to leaderboard. Moving to Wave ${newNumber}.`);
+    });
+}
         
         // --- TIMER CONTROL (SYNC WRITE) ---
         /**
@@ -1058,81 +1009,93 @@
          * Time is NOT recorded to the leaderboard upon this specific reset.
          */
         function resetWave(group) {
-            if (!isAdminLoggedIn) return;
-            
-            const timers = appState.groups[group].timers;
-            const anyTimeRunning = Object.values(timers).some(t => t.running);
-            const anyTimeRecorded = Object.values(timers).some(t => t.elapsed > 0);
-            
-            if (!anyTimeRunning && !anyTimeRecorded) {
-                alert(`Group ${group} is already reset and ready to start.`);
-                return;
-            }
+    if (!isAdminLoggedIn) return;
+    
+    const timers = appState.groups[group].timers;
+    const currentWaveNumber = appState.groups[group].number;
 
-            const password = prompt(`To confirm the force reset of Group ${group} (Wave ${appState.groups[group].number}) and prevent recording times, please enter the password:`);
+    const password = prompt(`To confirm reset of Group ${group} (Wave ${currentWaveNumber}):\n1. Running timers will stop.\n2. ANY existing leaderboard entries for Wave ${currentWaveNumber} will be DELETED.\n\nEnter Password:`);
 
-            if (password === RESET_PASSWORD) {
-                // Perform the reset
-                resetWaveTimers(group); 
-                alert(`Group ${group} Wave ${appState.groups[group].number} timers have been force reset to 00:00:00. No times were recorded to the leaderboard.`);
-            } else {
-                alert("Reset canceled or incorrect password.");
+    if (password === RESET_PASSWORD) {
+        // 1. Find and delete existing entries for this specific wave from the leaderboard
+        const entriesToDelete = globalStoppedTimes.filter(item => 
+            item.group === parseInt(group) && item.waveNumber === currentWaveNumber
+        );
+
+        const deleteUpdates = {};
+        entriesToDelete.forEach(entry => {
+            if (entry.key) {
+                deleteUpdates[`/leaderboard/${entry.key}`] = null;
             }
-        }
+        });
+
+        // 2. Prepare timer reset
+        Object.keys(timers).forEach(color => {
+            deleteUpdates[`groups/${group}/timers/${color}/running`] = false;
+            deleteUpdates[`groups/${group}/timers/${color}/elapsed`] = 0;
+            deleteUpdates[`groups/${group}/timers/${color}/startTime`] = null;
+        });
+
+        db.ref('/').update(deleteUpdates);
+        alert(`Group ${group} Wave ${currentWaveNumber} has been wiped from the system.`);
+    } else {
+        alert("Reset canceled.");
+    }
+}
         
         /**
          * UPDATED: Now takes the button element as an argument to immediately disable it.
          */
         function stopColor(group, color, buttonElement) {
-            const timer = appState.groups[group].timers[color];
-            
-            if (timer.running) {
-                
-                // FIX: Immediately disable the button to prevent double-clicks/multiple attempts
-                if (buttonElement) {
-                    buttonElement.disabled = true;
-                    buttonElement.textContent = "STOPPED";
-                }
-
-                const finalElapsed = calculateTime(timer);
-                
-                const timerUpdates = {
-                    running: false,
-                    elapsed: finalElapsed,
-                    startTime: null 
-                };
-
-                const colorInfo = COLORS.find(c => c.name.toLowerCase() === color.toLowerCase());
-                const newLeaderboardEntry = { 
-                    group: parseInt(group), 
-                    color: colorInfo.name, 
-                    timeMs: finalElapsed,
-                    waveNumber: appState.groups[group].number,
-                    bib: timer.bib || 'N/A',
-                    recordedTime: firebase.database.ServerValue.TIMESTAMP 
-                };
-                
-                const updates = {};
-                updates[`/groups/${group}/timers/${color}`] = {...timer, ...timerUpdates}; 
-                
-                // PUSH TO LEADERBOARD
-                db.ref('/leaderboard').push(newLeaderboardEntry);
-                db.ref('/').update(updates);
-            }
+    const timer = appState.groups[group].timers[color];
+    
+    if (timer.running) {
+        if (buttonElement) {
+            buttonElement.disabled = true;
+            buttonElement.textContent = "STOPPED";
         }
+
+        const finalElapsed = calculateTime(timer);
+        
+        const timerUpdates = {
+            running: false,
+            elapsed: finalElapsed,
+            startTime: null 
+        };
+
+        const updates = {};
+        updates[`/groups/${group}/timers/${color}`] = {...timer, ...timerUpdates}; 
+        
+        // Removed the leaderboard push from here
+        db.ref('/').update(updates);
+    }
+}
         
         function resetGlobalLeaderboard() {
             if (!isAdminLoggedIn) return;
+    
+    // Prompt the user for the password
+    const password = prompt("To confirm the **COMPLETE GLOBAL RESET** of the leaderboard and all times, please enter the global reset password (Password: password):");
+    
+    if (password === GLOBAL_RESET_PASSWORD) {
+        if (confirm("Are you **ABSOLUTELY** sure? This will clear ALL stopped times and reset running timers for both groups. This action cannot be undone.")) {
+            const updates = {};
+            updates['/leaderboard'] = null; 
             
-            if (confirm("Are you sure you want to completely clear the entire leaderboard and all stopped times across both groups? This action cannot be undone.")) {
-                const updates = {};
-                updates['/leaderboard'] = null; 
-                
-                resetWaveTimers(1);
-                resetWaveTimers(2);
-                
-                db.ref('/').update(updates);
-            }
+            // Also reset current running wave timers
+            resetWaveTimers(1);
+            resetWaveTimers(2);
+            
+            db.ref('/').update(updates);
+            alert("Global Leaderboard and all running timers have been completely reset.");
+        } 
+        else {
+            alert("Global reset canceled by user confirmation.");
+        }
+    } 
+    else if (password !== null) {
+        alert("Global reset canceled or incorrect password.");
+    }
         }
         
         function exportLeaderboardToCSV() {
@@ -1336,15 +1299,9 @@
 
                     <div class="volunteer-controls">
                         <button class="btn-volunteer-stop" id="volunteer-stop-btn" onclick="volunteerStop('${group}', '${color}', this)" ${buttonDisabled ? 'disabled' : ''}>${buttonText}</button>
-                        <button class="btn-volunteer-stop" 
-                                style="background: var(--color-dark);" 
-                                id="volunteer-giveup-btn" 
-                                onclick="volunteerGiveUp('${group}', '${color}', this)" 
-                                ${buttonDisabled ? 'disabled' : ''} 
-                                ${currentElapsed > 0 && !timer.running ? 'disabled' : ''} 
-                                >GIVE UP / DNF</button>
+                    </div>
                 </div>
-                `;
+            `;
         }
 
         /**
