@@ -1287,66 +1287,62 @@
         /**
          * UPDATED: Passes the button element to the volunteerStop function.
          */
-        function renderVolunteerDashboard(group, color) {
-            if (!appState.groups || !appState.groups[group]) return;
+        // --- IMPROVED VOLUNTEER RENDERING ---
+function renderVolunteerDashboard(group, color) {
+    if (!appState.groups || !appState.groups[group]) return;
 
-            const colorInfo = COLORS.find(c => c.name.toLowerCase() === color.toLowerCase());
-            const timer = appState.groups[group].timers[color];
-            const status = timer.status;
-            
-            const dashboard = document.getElementById('volunteer-dashboard');
+    const dashboard = document.getElementById('volunteer-dashboard');
+    const colorInfo = COLORS.find(c => c.name.toLowerCase() === color.toLowerCase());
+    const timer = appState.groups[group].timers[color];
 
-            let timerDisplayContent;
-            let timerClass = 'volunteer-timer';
-            let currentElapsed = calculateTime(timer);
-            let buttonDisabled = !timer.running || status === 'na';
-            let buttonText = currentElapsed > 0 && !timer.running ? 'STOPPED' : 'STOP';
-            
-            if (status === 'na') {
-                timerDisplayContent = 'N/A: Not Running This Wave';
-                timerClass += ' na-status';
-                buttonText = 'STOP'; // Reset text visually for N/A
-            } else if (timer.running) {
-                timerDisplayContent = formatTime(currentElapsed);
-            } else if (currentElapsed > 0) {
-                 timerDisplayContent = formatTime(currentElapsed);
-                 buttonDisabled = true; 
-            } else {
-                timerDisplayContent = '00:00:00';
-            }
-            
-            // FIX: Re-render the dashboard to update the time and button state
-            dashboard.innerHTML = `
-                <div class="volunteer-dashboard">
-                    <div class="volunteer-header">
-                        <div class="volunteer-wave-number" id="volunteer-group-wave-num">Group ${group} | Wave ${appState.groups[group].number}</div>
-                        <h2 style="margin-bottom: 0;">Your Assignment</h2>
-                    </div>
-
-                    <div class="volunteer-color-display">
-                        <div class="volunteer-color-box" style="background: ${colorInfo.hex};"></div>
-                        <div class="volunteer-color-name">${colorInfo.name}</div>
-                    </div>
-
-                    <div style="font-size: 14px; color: #666; margin: 10px 0;">Participant BIB: <span style="font-weight: bold; color: var(--color-dark);" id="volunteer-bib">${timer.bib || 'N/A'}</span></div>
-
-                    <div style="font-size: 14px; color: #666; margin: 10px 0;">Track and stop your participant's time</div>
-
-                    <div class="${timerClass}" id="volunteer-timer-${group}-${color}">${timerDisplayContent}</div>
-
-                    <div class="volunteer-controls">
-                        <button class="btn-volunteer-stop" id="volunteer-stop-btn" onclick="volunteerStop('${group}', '${color}', this)" ${buttonDisabled ? 'disabled' : ''}>${buttonText}</button>
-                        <button class="btn-volunteer-stop" 
-                                style="background: var(--color-dark);" 
-                                id="volunteer-giveup-btn" 
-                                onclick="volunteerGiveUp('${group}', '${color}', this)" 
-                                ${buttonDisabled ? 'disabled' : ''} 
-                                ${currentElapsed > 0 && !timer.running ? 'disabled' : ''} 
-                                >GIVE UP / DNF</button>
+    // ONLY render the HTML structure if it's not already there 
+    // to prevent losing button focus/clicks
+    if (!dashboard.querySelector('.volunteer-dashboard')) {
+        dashboard.innerHTML = `
+            <div class="volunteer-dashboard">
+                <div class="volunteer-header">
+                    <div class="volunteer-wave-number" id="v-group-wave-display"></div>
+                    <h2 style="margin-bottom: 0;">Your Assignment</h2>
                 </div>
-                `;
-        }
+                <div class="volunteer-color-display">
+                    <div class="volunteer-color-box" style="background: ${colorInfo.hex};"></div>
+                    <div class="volunteer-color-name">${colorInfo.name}</div>
+                </div>
+                <div style="font-size: 14px; color: #666; margin: 10px 0;">Participant BIB: <span id="v-bib-display" style="font-weight: bold; color: var(--color-dark);"></span></div>
+                <div class="volunteer-timer" id="v-timer-display">00:00:00</div>
+                <div class="volunteer-controls">
+                    <button class="btn-volunteer-stop" id="v-stop-btn">STOP</button>
+                    <button class="btn-volunteer-stop" style="background: var(--color-dark);" id="v-dnf-btn">GIVE UP / DNF</button>
+                </div>
+            </div>`;
 
+        // Attach event listeners ONCE to the persistent elements
+        document.getElementById('v-stop-btn').onclick = function() { volunteerStop(group, color, this); };
+        document.getElementById('v-dnf-btn').onclick = function() { volunteerGiveUp(group, color, this); };
+    }
+
+    // Now update only the dynamic VALUES
+    const currentElapsed = calculateTime(timer);
+    const stopBtn = document.getElementById('v-stop-btn');
+    const dnfBtn = document.getElementById('v-dnf-btn');
+    const timerDisplay = document.getElementById('v-timer-display');
+
+    document.getElementById('v-group-wave-display').textContent = `Group ${group} | Wave ${appState.groups[group].number}`;
+    document.getElementById('v-bib-display').textContent = timer.bib || 'N/A';
+    
+    // Update Timer Text and Classes
+    timerDisplay.textContent = timer.status === 'na' ? 'N/A: Not Running' : formatTime(currentElapsed);
+    timerDisplay.className = `volunteer-timer ${timer.status === 'na' ? 'na-status' : ''}`;
+
+    // Update Button States
+    const isStopped = currentElapsed > 0 && !timer.running;
+    const isInactive = timer.status === 'na';
+
+    stopBtn.disabled = !timer.running || isInactive || isStopped;
+    stopBtn.textContent = isStopped ? 'STOPPED' : 'STOP';
+    
+    dnfBtn.disabled = !timer.running || isInactive || isStopped;
+}
         /**
          * UPDATED: Now looks up the button element and passes it to stopColor.
          */
