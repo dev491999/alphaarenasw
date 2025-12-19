@@ -564,7 +564,7 @@
                     <button onclick="adminLogin()">Login</button>
                 </div>
                 <div class="login-message" id="admin-login-message">
-                    Enter the admin access code to manage the groups.
+                    Enter the admin access code to manage the groups. (Code: **ADMIN123**)
                 </div>
             </div>
         </div>
@@ -680,8 +680,7 @@
         // --- CONSTANTS & LOCAL STATE (Mirrored from Firebase) ---
         const ADMIN_CODE = "ADMIN123"; 
         const RESET_PASSWORD = "Reset"; // Password for group reset
-        const GLOBAL_RESET_PASSWORD = "password"; // <--- ADD THIS LINE
-        const BIB_PREFIX = "AW";
+        const BIB_PREFIX = "AW"; 
         
         const COLORS = [
             { name: 'Red', hex: '#c0152f', abbr: 'RE' },
@@ -744,13 +743,13 @@
         }
         
         // --- SYNCED TIME CALCULATION ---
-        function calculateTime(timer) {
-             // Calculate time based on the shared startTime from the database
-             if (timer.running && timer.startTime) {
-                 return Date.now() - timer.startTime;
-             }
-             return timer.elapsed || 0;
-        }
+       function calculateTime(timer) {
+    // Calculate time based on the shared startTime from the database
+    if (timer.running && timer.startTime) {
+        return Date.now() - timer.startTime;
+    }
+    return timer.elapsed || 0;
+}
 
 
             // --- TIME FORMATTING (MM:SS:CC) ---
@@ -809,8 +808,9 @@
         db.ref('/leaderboard').push(newLeaderboardEntry);
         db.ref('/').update(updates);
     }
-}     
-   // --- ADMIN LOGIN LOGIC ---
+}
+
+        // --- ADMIN LOGIN LOGIC ---
         function adminLogin() {
             const code = document.getElementById('admin-code-input').value.trim();
             const messageElement = document.getElementById('admin-login-message');
@@ -927,56 +927,45 @@
 
         
         function incrementGroup(group) {
-    if (!isAdminLoggedIn) return;
+            if (!isAdminLoggedIn) return;
 
-    const groupData = appState.groups[group];
-    const timers = groupData.timers;
-    const currentWaveNumber = groupData.number;
+            const timers = appState.groups[group].timers;
+            const currentWaveNumber = appState.groups[group].number;
 
-    const allStopped = Object.values(timers).every(t => !t.running);
+            const allStopped = Object.values(timers).every(t => !t.running);
             const anyActiveTimeRecorded = Object.values(timers).some(t => t.elapsed > 0 && t.status === 'active');
 
-    if (!allStopped) {
-        alert("Stop all timers before finishing the wave.");
-        return;
-    }
-
-    // Prepare leaderboard entries only for active colors that have a recorded time
-    const updates = {};
-    Object.keys(timers).forEach(color => {
-        const t = timers[color];
-        if (t.status === 'active' && t.elapsed > 0) {
-            const colorInfo = COLORS.find(c => c.name.toLowerCase() === color.toLowerCase());
+            if (!allStopped) {
+                alert(`Please stop all running timers in Group ${group} before moving to the next wave.`);
+                return;
+            }
             
-            // Create a new unique key for the leaderboard entry
-            const newRef = db.ref('/leaderboard').push();
-            updates[`/leaderboard/${newRef.key}`] = {
-                group: parseInt(group),
-                color: colorInfo.name,
-                timeMs: t.elapsed,
-                waveNumber: currentWaveNumber,
-                bib: t.bib || 'N/A',
-                recordedTime: firebase.database.ServerValue.TIMESTAMP
-            };
+            if (anyActiveTimeRecorded) {
+                
+                // FINAL CHECK: Ensure the current wave number is now considered 'used'
+                if (!isWaveNumberUsed(currentWaveNumber)) {
+                     // This is an integrity check, indicating a completed wave didn't record a time.
+                     // We proceed anyway, but warn the admin if needed, and rely on the next wave logic.
+                }
+
+                const newNumber = currentWaveNumber + 2;
+                
+                const updates = {};
+                updates[`groups/${group}/number`] = newNumber;
+                
+                Object.keys(timers).forEach(color => {
+                    updates[`groups/${group}/timers/${color}/running`] = false;
+                    updates[`groups/${group}/timers/${color}/elapsed`] = 0;
+                    updates[`groups/${group}/timers/${color}/startTime`] = null;
+                    updates[`groups/${group}/timers/${color}/status`] = 'active'; 
+                    updates[`groups/${group}/timers/${color}/bib`] = ''; 
+                });
+                
+                db.ref('/').update(updates);
+            } else {
+                 alert(`Cannot move to the next wave (Wave ${appState.groups[group].number + 2}) for Group ${group} because no active times were recorded in the current wave.`);
+            }
         }
-    });
-
-    // Prepare Next Wave Reset
-    const newNumber = currentWaveNumber + 2;
-    updates[`groups/${group}/number`] = newNumber;
-    
-    Object.keys(timers).forEach(color => {
-        updates[`groups/${group}/timers/${color}/running`] = false;
-        updates[`groups/${group}/timers/${color}/elapsed`] = 0;
-        updates[`groups/${group}/timers/${color}/startTime`] = null;
-        updates[`groups/${group}/timers/${color}/status`] = 'active'; 
-        updates[`groups/${group}/timers/${color}/bib`] = ''; 
-    });
-
-    db.ref('/').update(updates).then(() => {
-        alert(`Wave ${currentWaveNumber} saved to leaderboard. Moving to Wave ${newNumber}.`);
-    });
-}
         
         // --- TIMER CONTROL (SYNC WRITE) ---
         /**
@@ -1069,93 +1058,81 @@
          * Time is NOT recorded to the leaderboard upon this specific reset.
          */
         function resetWave(group) {
-    if (!isAdminLoggedIn) return;
-    
-    const timers = appState.groups[group].timers;
-    const currentWaveNumber = appState.groups[group].number;
-
-    const password = prompt(`To confirm reset of Group ${group} (Wave ${currentWaveNumber}):\n1. Running timers will stop.\n2. ANY existing leaderboard entries for Wave ${currentWaveNumber} will be DELETED.\n\nEnter Password:`);
-
-    if (password === RESET_PASSWORD) {
-        // 1. Find and delete existing entries for this specific wave from the leaderboard
-        const entriesToDelete = globalStoppedTimes.filter(item => 
-            item.group === parseInt(group) && item.waveNumber === currentWaveNumber
-        );
-
-        const deleteUpdates = {};
-        entriesToDelete.forEach(entry => {
-            if (entry.key) {
-                deleteUpdates[`/leaderboard/${entry.key}`] = null;
+            if (!isAdminLoggedIn) return;
+            
+            const timers = appState.groups[group].timers;
+            const anyTimeRunning = Object.values(timers).some(t => t.running);
+            const anyTimeRecorded = Object.values(timers).some(t => t.elapsed > 0);
+            
+            if (!anyTimeRunning && !anyTimeRecorded) {
+                alert(`Group ${group} is already reset and ready to start.`);
+                return;
             }
-        });
 
-        // 2. Prepare timer reset
-        Object.keys(timers).forEach(color => {
-            deleteUpdates[`groups/${group}/timers/${color}/running`] = false;
-            deleteUpdates[`groups/${group}/timers/${color}/elapsed`] = 0;
-            deleteUpdates[`groups/${group}/timers/${color}/startTime`] = null;
-        });
+            const password = prompt(`To confirm the force reset of Group ${group} (Wave ${appState.groups[group].number}) and prevent recording times, please enter the password:`);
 
-        db.ref('/').update(deleteUpdates);
-        alert(`Group ${group} Wave ${currentWaveNumber} has been wiped from the system.`);
-    } else {
-        alert("Reset canceled.");
-    }
-}
+            if (password === RESET_PASSWORD) {
+                // Perform the reset
+                resetWaveTimers(group); 
+                alert(`Group ${group} Wave ${appState.groups[group].number} timers have been force reset to 00:00:00. No times were recorded to the leaderboard.`);
+            } else {
+                alert("Reset canceled or incorrect password.");
+            }
+        }
         
         /**
          * UPDATED: Now takes the button element as an argument to immediately disable it.
          */
         function stopColor(group, color, buttonElement) {
-    const timer = appState.groups[group].timers[color];
-    
-    if (timer.running) {
-        if (buttonElement) {
-            buttonElement.disabled = true;
-            buttonElement.textContent = "STOPPED";
+            const timer = appState.groups[group].timers[color];
+            
+            if (timer.running) {
+                
+                // FIX: Immediately disable the button to prevent double-clicks/multiple attempts
+                if (buttonElement) {
+                    buttonElement.disabled = true;
+                    buttonElement.textContent = "STOPPED";
+                }
+
+                const finalElapsed = calculateTime(timer);
+                
+                const timerUpdates = {
+                    running: false,
+                    elapsed: finalElapsed,
+                    startTime: null 
+                };
+
+                const colorInfo = COLORS.find(c => c.name.toLowerCase() === color.toLowerCase());
+                const newLeaderboardEntry = { 
+                    group: parseInt(group), 
+                    color: colorInfo.name, 
+                    timeMs: finalElapsed,
+                    waveNumber: appState.groups[group].number,
+                    bib: timer.bib || 'N/A',
+                    recordedTime: firebase.database.ServerValue.TIMESTAMP 
+                };
+                
+                const updates = {};
+                updates[`/groups/${group}/timers/${color}`] = {...timer, ...timerUpdates}; 
+                
+                // PUSH TO LEADERBOARD
+                db.ref('/leaderboard').push(newLeaderboardEntry);
+                db.ref('/').update(updates);
+            }
         }
-
-        const finalElapsed = calculateTime(timer);
-        
-        const timerUpdates = {
-            running: false,
-            elapsed: finalElapsed,
-            startTime: null 
-        };
-
-        const updates = {};
-        updates[`/groups/${group}/timers/${color}`] = {...timer, ...timerUpdates}; 
-        
-        // Removed the leaderboard push from here
-        db.ref('/').update(updates);
-    }
-}
         
         function resetGlobalLeaderboard() {
             if (!isAdminLoggedIn) return;
-    
-    // Prompt the user for the password
-    const password = prompt("To confirm the **COMPLETE GLOBAL RESET** of the leaderboard and all times, please enter the global reset password (Password: password):");
-    
-    if (password === GLOBAL_RESET_PASSWORD) {
-        if (confirm("Are you **ABSOLUTELY** sure? This will clear ALL stopped times and reset running timers for both groups. This action cannot be undone.")) {
-            const updates = {};
-            updates['/leaderboard'] = null; 
             
-            // Also reset current running wave timers
-            resetWaveTimers(1);
-            resetWaveTimers(2);
-            
-            db.ref('/').update(updates);
-            alert("Global Leaderboard and all running timers have been completely reset.");
-        } 
-        else {
-            alert("Global reset canceled by user confirmation.");
-        }
-    } 
-    else if (password !== null) {
-        alert("Global reset canceled or incorrect password.");
-    }
+            if (confirm("Are you sure you want to completely clear the entire leaderboard and all stopped times across both groups? This action cannot be undone.")) {
+                const updates = {};
+                updates['/leaderboard'] = null; 
+                
+                resetWaveTimers(1);
+                resetWaveTimers(2);
+                
+                db.ref('/').update(updates);
+            }
         }
         
         function exportLeaderboardToCSV() {
@@ -1310,66 +1287,62 @@
         /**
          * UPDATED: Passes the button element to the volunteerStop function.
          */
-        function renderVolunteerDashboard(group, color) {
-            if (!appState.groups || !appState.groups[group]) return;
+        // --- IMPROVED VOLUNTEER RENDERING ---
+function renderVolunteerDashboard(group, color) {
+    if (!appState.groups || !appState.groups[group]) return;
 
-            const colorInfo = COLORS.find(c => c.name.toLowerCase() === color.toLowerCase());
-            const timer = appState.groups[group].timers[color];
-            const status = timer.status;
-            
-            const dashboard = document.getElementById('volunteer-dashboard');
+    const dashboard = document.getElementById('volunteer-dashboard');
+    const colorInfo = COLORS.find(c => c.name.toLowerCase() === color.toLowerCase());
+    const timer = appState.groups[group].timers[color];
 
-            let timerDisplayContent;
-            let timerClass = 'volunteer-timer';
-            let currentElapsed = calculateTime(timer);
-            let buttonDisabled = !timer.running || status === 'na';
-            let buttonText = currentElapsed > 0 && !timer.running ? 'STOPPED' : 'STOP';
-            
-            if (status === 'na') {
-                timerDisplayContent = 'N/A: Not Running This Wave';
-                timerClass += ' na-status';
-                buttonText = 'STOP'; // Reset text visually for N/A
-            } else if (timer.running) {
-                timerDisplayContent = formatTime(currentElapsed);
-            } else if (currentElapsed > 0) {
-                 timerDisplayContent = formatTime(currentElapsed);
-                 buttonDisabled = true; 
-            } else {
-                timerDisplayContent = '00:00:00';
-            }
-            
-            // FIX: Re-render the dashboard to update the time and button state
-            dashboard.innerHTML = `
-                <div class="volunteer-dashboard">
-                    <div class="volunteer-header">
-                        <div class="volunteer-wave-number" id="volunteer-group-wave-num">Group ${group} | Wave ${appState.groups[group].number}</div>
-                        <h2 style="margin-bottom: 0;">Your Assignment</h2>
-                    </div>
-
-                    <div class="volunteer-color-display">
-                        <div class="volunteer-color-box" style="background: ${colorInfo.hex};"></div>
-                        <div class="volunteer-color-name">${colorInfo.name}</div>
-                    </div>
-
-                    <div style="font-size: 14px; color: #666; margin: 10px 0;">Participant BIB: <span style="font-weight: bold; color: var(--color-dark);" id="volunteer-bib">${timer.bib || 'N/A'}</span></div>
-
-                    <div style="font-size: 14px; color: #666; margin: 10px 0;">Track and stop your participant's time</div>
-
-                    <div class="${timerClass}" id="volunteer-timer-${group}-${color}">${timerDisplayContent}</div>
-
-                    <div class="volunteer-controls">
-                        <button class="btn-volunteer-stop" id="volunteer-stop-btn" onclick="volunteerStop('${group}', '${color}', this)" ${buttonDisabled ? 'disabled' : ''}>${buttonText}</button>
-                        <button class="btn-volunteer-stop" 
-                                style="background: var(--color-dark);" 
-                                id="volunteer-giveup-btn" 
-                                onclick="volunteerGiveUp('${group}', '${color}', this)" 
-                                ${buttonDisabled ? 'disabled' : ''} 
-                                ${currentElapsed > 0 && !timer.running ? 'disabled' : ''} 
-                                >GIVE UP / DNF</button>
+    // ONLY render the HTML structure if it's not already there 
+    // to prevent losing button focus/clicks
+    if (!dashboard.querySelector('.volunteer-dashboard')) {
+        dashboard.innerHTML = `
+            <div class="volunteer-dashboard">
+                <div class="volunteer-header">
+                    <div class="volunteer-wave-number" id="v-group-wave-display"></div>
+                    <h2 style="margin-bottom: 0;">Your Assignment</h2>
                 </div>
-            `;
-        }
+                <div class="volunteer-color-display">
+                    <div class="volunteer-color-box" style="background: ${colorInfo.hex};"></div>
+                    <div class="volunteer-color-name">${colorInfo.name}</div>
+                </div>
+                <div style="font-size: 14px; color: #666; margin: 10px 0;">Participant BIB: <span id="v-bib-display" style="font-weight: bold; color: var(--color-dark);"></span></div>
+                <div class="volunteer-timer" id="v-timer-display">00:00:00</div>
+                <div class="volunteer-controls">
+                    <button class="btn-volunteer-stop" id="v-stop-btn">STOP</button>
+                    <button class="btn-volunteer-stop" style="background: var(--color-dark);" id="v-dnf-btn">GIVE UP / DNF</button>
+                </div>
+            </div>`;
 
+        // Attach event listeners ONCE to the persistent elements
+        document.getElementById('v-stop-btn').onclick = function() { volunteerStop(group, color, this); };
+        document.getElementById('v-dnf-btn').onclick = function() { volunteerGiveUp(group, color, this); };
+    }
+
+    // Now update only the dynamic VALUES
+    const currentElapsed = calculateTime(timer);
+    const stopBtn = document.getElementById('v-stop-btn');
+    const dnfBtn = document.getElementById('v-dnf-btn');
+    const timerDisplay = document.getElementById('v-timer-display');
+
+    document.getElementById('v-group-wave-display').textContent = `Group ${group} | Wave ${appState.groups[group].number}`;
+    document.getElementById('v-bib-display').textContent = timer.bib || 'N/A';
+    
+    // Update Timer Text and Classes
+    timerDisplay.textContent = timer.status === 'na' ? 'N/A: Not Running' : formatTime(currentElapsed);
+    timerDisplay.className = `volunteer-timer ${timer.status === 'na' ? 'na-status' : ''}`;
+
+    // Update Button States
+    const isStopped = currentElapsed > 0 && !timer.running;
+    const isInactive = timer.status === 'na';
+
+    stopBtn.disabled = !timer.running || isInactive || isStopped;
+    stopBtn.textContent = isStopped ? 'STOPPED' : 'STOP';
+    
+    dnfBtn.disabled = !timer.running || isInactive || isStopped;
+}
         /**
          * UPDATED: Now looks up the button element and passes it to stopColor.
          */
@@ -1469,7 +1442,7 @@
             
             // Set the interval to check for updates only if it's not already running
             if (!intervalId) {
-                intervalId = setInterval(updateAllUI, 100); 
+                intervalId = setInterval(updateAllUI, 50); 
             }
         }
 
